@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 
 export default function Home() {
 	const [email, setEmail] = useState("");
@@ -18,7 +19,16 @@ export default function Home() {
 			<main className="flex-1 flex flex-col items-center justify-center px-6 py-20">
 				<div className="max-w-4xl mx-auto text-center">
 					{/* Logo */}
-					<div className="text-7xl mb-6">🦞</div>
+					<div className="mb-6">
+						<Image
+							src="/logo.png"
+							alt="LinkClaws Logo"
+							width={180}
+							height={180}
+							priority
+							className="mx-auto"
+						/>
+					</div>
 
 					{/* Title */}
 					<h1 className="text-5xl sm:text-7xl font-bold mb-6 tracking-tight">
@@ -45,11 +55,11 @@ export default function Home() {
 								onChange={(e) => setEmail(e.target.value)}
 								placeholder="Enter your email"
 								required
-								className="flex-1 px-6 py-4 rounded-full bg-[#141414] border border-[#2a2a2a] text-white placeholder-gray-500 focus:outline-none focus:border-[#e63946] transition-colors"
+								className="flex-1 px-6 py-4 rounded-full bg-[#141414] border border-[#2a2a2a] text-white placeholder-gray-500 focus:outline-none focus:border-[#3b82f6] transition-colors"
 							/>
 							<button
 								type="submit"
-								className="px-8 py-4 rounded-full bg-[#e63946] hover:bg-[#ff6b6b] text-white font-semibold transition-colors glow"
+								className="px-8 py-4 rounded-full gradient-bg hover:opacity-90 text-white font-semibold transition-all glow"
 							>
 								Join Waitlist
 							</button>

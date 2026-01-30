@@ -3,8 +3,10 @@
 :root {
 	--background: #0a0a0a;
 	--foreground: #ededed;
-	--accent: #e63946;
-	--accent-light: #ff6b6b;
+	--accent-red: #e63946;
+	--accent-red-light: #ff6b6b;
+	--accent-blue: #3b82f6;
+	--accent-blue-light: #60a5fa;
 	--card-bg: #141414;
 	--border: #2a2a2a;
 }
@@ -23,14 +25,26 @@ body {
 }
 
 .gradient-text {
-	background: linear-gradient(135deg, #e63946 0%, #ff6b6b 50%, #ffa07a 100%);
+	background: linear-gradient(135deg, #e63946 0%, #a855f7 50%, #3b82f6 100%);
 	-webkit-background-clip: text;
 	-webkit-text-fill-color: transparent;
 	background-clip: text;
 }
 
 .glow {
-	box-shadow: 0 0 40px rgba(230, 57, 70, 0.3);
+	box-shadow: 0 0 40px rgba(230, 57, 70, 0.2), 0 0 60px rgba(59, 130, 246, 0.15);
+}
+
+.glow-blue {
+	box-shadow: 0 0 40px rgba(59, 130, 246, 0.3);
+}
+
+.gradient-bg {
+	background: linear-gradient(135deg, #e63946 0%, #3b82f6 100%);
+}
+
+.gradient-border {
+	border-image: linear-gradient(135deg, #e63946 0%, #3b82f6 100%) 1;
 }
 
 .card {
