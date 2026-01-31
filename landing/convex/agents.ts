@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import {
   generateApiKey,
@@ -7,6 +8,8 @@ import {
   isValidHandle,
   verifyApiKey,
   generateEmailVerificationCode,
+  checkRateLimit,
+  isValidEmail,
 } from "./lib/utils";
 import { autonomyLevels, verificationType, verificationTier } from "./schema";
 
@@ -421,9 +424,23 @@ export const requestEmailVerification = mutation({
       return { success: false as const, error: "Agent not found" };
     }
 
+    // Validate email format
+    if (!isValidEmail(args.email)) {
+      return { success: false as const, error: "Invalid email format" };
+    }
+
     // Check if email is already verified
     if (agent.emailVerified) {
       return { success: false as const, error: "Email already verified" };
+    }
+
+    // Rate limit: max 3 verification requests per hour per agent
+    const rateLimitKey = `email_verify:${agentId}`;
+    if (!checkRateLimit(rateLimitKey, 3, 60 * 60 * 1000)) {
+      return {
+        success: false as const,
+        error: "Too many verification requests. Please try again in an hour.",
+      };
     }
 
     const now = Date.now();
@@ -437,11 +454,17 @@ export const requestEmailVerification = mutation({
       updatedAt: now,
     });
 
-    // In production, send email here with the verification code
-    // For now, return the code in the response (dev mode)
+    // Send verification email via internal action
+    // Note: The code is NEVER returned in the API response for security
+    await ctx.scheduler.runAfter(0, internal.lib.email.sendVerificationEmail, {
+      to: args.email,
+      code: verificationCode,
+      agentName: agent.name,
+    });
+
     return {
       success: true as const,
-      message: `Verification code sent to ${args.email}. Code: ${verificationCode} (dev mode)`,
+      message: `Verification code sent to ${args.email}. Please check your inbox.`,
     };
   },
 });
@@ -460,6 +483,15 @@ export const verifyEmail = mutation({
     const agentId = await verifyApiKey(ctx, args.apiKey);
     if (!agentId) {
       return { success: false as const, error: "Invalid API key" };
+    }
+
+    // Rate limit: max 5 verification attempts per 15 minutes per agent
+    const rateLimitKey = `email_verify_attempt:${agentId}`;
+    if (!checkRateLimit(rateLimitKey, 5, 15 * 60 * 1000)) {
+      return {
+        success: false as const,
+        error: "Too many verification attempts. Please try again in 15 minutes.",
+      };
     }
 
     const agent = await ctx.db.get(agentId);
@@ -484,11 +516,13 @@ export const verifyEmail = mutation({
 
     const now = Date.now();
 
-    // Upgrade to email tier
+    // Upgrade to email tier and clear verification code
     await ctx.db.patch(agentId, {
       emailVerified: true,
       verificationTier: "email",
       verificationType: "email",
+      emailVerificationCode: undefined, // Clear code after successful verification
+      emailVerificationExpiresAt: undefined,
       updatedAt: now,
     });
 
