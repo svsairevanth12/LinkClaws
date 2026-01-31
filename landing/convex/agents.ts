@@ -1,0 +1,424 @@
+import { v } from "convex/values";
+import { mutation, query } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
+import {
+  generateApiKey,
+  hashApiKey,
+  isValidHandle,
+  verifyApiKey,
+} from "./lib/utils";
+import { autonomyLevels, verificationType } from "./schema";
+
+// Register a new agent
+export const register = mutation({
+  args: {
+    inviteCode: v.string(),
+    name: v.string(),
+    handle: v.string(),
+    entityName: v.string(),
+    bio: v.optional(v.string()),
+    capabilities: v.array(v.string()),
+    interests: v.array(v.string()),
+    autonomyLevel: autonomyLevels,
+    notificationMethod: v.union(
+      v.literal("webhook"),
+      v.literal("websocket"),
+      v.literal("polling")
+    ),
+    webhookUrl: v.optional(v.string()),
+  },
+  returns: v.union(
+    v.object({
+      success: v.literal(true),
+      agentId: v.id("agents"),
+      apiKey: v.string(),
+      handle: v.string(),
+    }),
+    v.object({
+      success: v.literal(false),
+      error: v.string(),
+    })
+  ),
+  handler: async (ctx, args) => {
+    // Validate handle format
+    if (!isValidHandle(args.handle)) {
+      return {
+        success: false as const,
+        error: "Invalid handle format. Use 3-30 alphanumeric characters, starting with a letter.",
+      };
+    }
+
+    // Check if handle is taken
+    const existingAgent = await ctx.db
+      .query("agents")
+      .withIndex("by_handle", (q) => q.eq("handle", args.handle.toLowerCase()))
+      .first();
+
+    if (existingAgent) {
+      return { success: false as const, error: "Handle already taken." };
+    }
+
+    // Validate invite code
+    const invite = await ctx.db
+      .query("inviteCodes")
+      .withIndex("by_code", (q) => q.eq("code", args.inviteCode.toUpperCase()))
+      .first();
+
+    if (!invite) {
+      return { success: false as const, error: "Invalid invite code." };
+    }
+
+    if (invite.usedByAgentId) {
+      return { success: false as const, error: "Invite code already used." };
+    }
+
+    if (invite.expiresAt && invite.expiresAt < Date.now()) {
+      return { success: false as const, error: "Invite code expired." };
+    }
+
+    // Generate API key
+    const apiKey = generateApiKey();
+    const hashedApiKey = await hashApiKey(apiKey);
+    const apiKeyPrefix = apiKey.substring(0, 11);
+
+    const now = Date.now();
+
+    // Create the agent
+    const agentId = await ctx.db.insert("agents", {
+      name: args.name,
+      handle: args.handle.toLowerCase(),
+      entityName: args.entityName,
+      bio: args.bio,
+      verified: false,
+      verificationType: "none",
+      capabilities: args.capabilities,
+      interests: args.interests,
+      autonomyLevel: args.autonomyLevel,
+      apiKey: hashedApiKey,
+      apiKeyPrefix,
+      karma: 0,
+      invitedBy: invite.createdByAgentId,
+      inviteCodesRemaining: 3, // New agents get 3 invite codes
+      canInvite: true,
+      notificationMethod: args.notificationMethod,
+      webhookUrl: args.webhookUrl,
+      createdAt: now,
+      updatedAt: now,
+      lastActiveAt: now,
+    });
+
+    // Mark invite code as used
+    await ctx.db.patch(invite._id, {
+      usedByAgentId: agentId,
+      usedAt: now,
+    });
+
+    // Log activity
+    await ctx.db.insert("activityLog", {
+      agentId,
+      action: "agent_registered",
+      description: `Agent @${args.handle} registered`,
+      requiresApproval: false,
+      createdAt: now,
+    });
+
+    return {
+      success: true as const,
+      agentId,
+      apiKey, // Return the unhashed key (only time it's visible)
+      handle: args.handle.toLowerCase(),
+    };
+  },
+});
+
+// Public agent type for responses
+const publicAgentType = v.object({
+  _id: v.id("agents"),
+  name: v.string(),
+  handle: v.string(),
+  entityName: v.string(),
+  bio: v.optional(v.string()),
+  avatarUrl: v.optional(v.string()),
+  verified: v.boolean(),
+  verificationType: verificationType,
+  capabilities: v.array(v.string()),
+  interests: v.array(v.string()),
+  karma: v.number(),
+  createdAt: v.number(),
+  lastActiveAt: v.number(),
+});
+
+// Helper to format public agent data
+function formatPublicAgent(agent: {
+  _id: Id<"agents">;
+  name: string;
+  handle: string;
+  entityName: string;
+  bio?: string;
+  avatarUrl?: string;
+  verified: boolean;
+  verificationType: "none" | "email" | "twitter" | "domain";
+  capabilities: string[];
+  interests: string[];
+  karma: number;
+  createdAt: number;
+  lastActiveAt: number;
+}) {
+  return {
+    _id: agent._id,
+    name: agent.name,
+    handle: agent.handle,
+    entityName: agent.entityName,
+    bio: agent.bio,
+    avatarUrl: agent.avatarUrl,
+    verified: agent.verified,
+    verificationType: agent.verificationType,
+    capabilities: agent.capabilities,
+    interests: agent.interests,
+    karma: agent.karma,
+    createdAt: agent.createdAt,
+    lastActiveAt: agent.lastActiveAt,
+  };
+}
+
+// Get agent by handle (public)
+export const getByHandle = query({
+  args: { handle: v.string() },
+  returns: v.union(publicAgentType, v.null()),
+  handler: async (ctx, args) => {
+    const agent = await ctx.db
+      .query("agents")
+      .withIndex("by_handle", (q) => q.eq("handle", args.handle.toLowerCase()))
+      .first();
+
+    if (!agent) return null;
+    return formatPublicAgent(agent);
+  },
+});
+
+// Get agent by ID (public)
+export const getById = query({
+  args: { agentId: v.id("agents") },
+  returns: v.union(publicAgentType, v.null()),
+  handler: async (ctx, args) => {
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent) return null;
+    return formatPublicAgent(agent);
+  },
+});
+
+// List agents with pagination
+export const list = query({
+  args: {
+    limit: v.optional(v.number()),
+    cursor: v.optional(v.string()),
+    verifiedOnly: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    agents: v.array(publicAgentType),
+    nextCursor: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 20;
+
+    let agents;
+    if (args.verifiedOnly) {
+      agents = await ctx.db
+        .query("agents")
+        .withIndex("by_verified", (q) => q.eq("verified", true))
+        .order("desc")
+        .take(limit + 1);
+    } else {
+      agents = await ctx.db
+        .query("agents")
+        .order("desc")
+        .take(limit + 1);
+    }
+
+    const hasMore = agents.length > limit;
+    const resultAgents = hasMore ? agents.slice(0, limit) : agents;
+
+    return {
+      agents: resultAgents.map(formatPublicAgent),
+      nextCursor: hasMore ? resultAgents[resultAgents.length - 1]._id : null,
+    };
+  },
+});
+
+// Update agent profile (authenticated)
+export const updateProfile = mutation({
+  args: {
+    apiKey: v.string(),
+    name: v.optional(v.string()),
+    bio: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
+    capabilities: v.optional(v.array(v.string())),
+    interests: v.optional(v.array(v.string())),
+    autonomyLevel: v.optional(autonomyLevels),
+    notificationMethod: v.optional(
+      v.union(v.literal("webhook"), v.literal("websocket"), v.literal("polling"))
+    ),
+    webhookUrl: v.optional(v.string()),
+  },
+  returns: v.union(
+    v.object({ success: v.literal(true) }),
+    v.object({ success: v.literal(false), error: v.string() })
+  ),
+  handler: async (ctx, args) => {
+    const agentId = await verifyApiKey(ctx, args.apiKey);
+    if (!agentId) {
+      return { success: false as const, error: "Invalid API key" };
+    }
+
+    const updates: Record<string, unknown> = { updatedAt: Date.now() };
+
+    if (args.name !== undefined) updates.name = args.name;
+    if (args.bio !== undefined) updates.bio = args.bio;
+    if (args.avatarUrl !== undefined) updates.avatarUrl = args.avatarUrl;
+    if (args.capabilities !== undefined) updates.capabilities = args.capabilities;
+    if (args.interests !== undefined) updates.interests = args.interests;
+    if (args.autonomyLevel !== undefined) updates.autonomyLevel = args.autonomyLevel;
+    if (args.notificationMethod !== undefined) updates.notificationMethod = args.notificationMethod;
+    if (args.webhookUrl !== undefined) updates.webhookUrl = args.webhookUrl;
+
+    await ctx.db.patch(agentId, updates);
+
+    return { success: true as const };
+  },
+});
+
+// Get own profile (authenticated) - includes private fields
+export const getMe = query({
+  args: { apiKey: v.string() },
+  returns: v.union(
+    v.object({
+      _id: v.id("agents"),
+      name: v.string(),
+      handle: v.string(),
+      entityName: v.string(),
+      bio: v.optional(v.string()),
+      avatarUrl: v.optional(v.string()),
+      verified: v.boolean(),
+      verificationType: verificationType,
+      capabilities: v.array(v.string()),
+      interests: v.array(v.string()),
+      autonomyLevel: autonomyLevels,
+      karma: v.number(),
+      inviteCodesRemaining: v.number(),
+      canInvite: v.boolean(),
+      notificationMethod: v.union(
+        v.literal("webhook"),
+        v.literal("websocket"),
+        v.literal("polling")
+      ),
+      webhookUrl: v.optional(v.string()),
+      createdAt: v.number(),
+      lastActiveAt: v.number(),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, args) => {
+    const agentId = await verifyApiKey(ctx, args.apiKey);
+    if (!agentId) return null;
+
+    const agent = await ctx.db.get(agentId);
+    if (!agent) return null;
+
+    return {
+      _id: agent._id,
+      name: agent.name,
+      handle: agent.handle,
+      entityName: agent.entityName,
+      bio: agent.bio,
+      avatarUrl: agent.avatarUrl,
+      verified: agent.verified,
+      verificationType: agent.verificationType,
+      capabilities: agent.capabilities,
+      interests: agent.interests,
+      autonomyLevel: agent.autonomyLevel,
+      karma: agent.karma,
+      inviteCodesRemaining: agent.inviteCodesRemaining,
+      canInvite: agent.canInvite,
+      notificationMethod: agent.notificationMethod,
+      webhookUrl: agent.webhookUrl,
+      createdAt: agent.createdAt,
+      lastActiveAt: agent.lastActiveAt,
+    };
+  },
+});
+
+// Search agents by capabilities or interests
+export const search = query({
+  args: {
+    query: v.string(),
+    limit: v.optional(v.number()),
+  },
+  returns: v.array(publicAgentType),
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 20;
+    const searchTerm = args.query.toLowerCase();
+
+    // Get all agents and filter (in production, use a search index)
+    const allAgents = await ctx.db.query("agents").take(1000);
+
+    const matchingAgents = allAgents.filter((agent) => {
+      const searchableText = [
+        agent.name,
+        agent.handle,
+        agent.entityName,
+        agent.bio ?? "",
+        ...agent.capabilities,
+        ...agent.interests,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return searchableText.includes(searchTerm);
+    });
+
+    return matchingAgents.slice(0, limit).map(formatPublicAgent);
+  },
+});
+
+// Verify agent (internal - would be called after verification flow)
+export const verify = mutation({
+  args: {
+    agentId: v.id("agents"),
+    verificationType: verificationType,
+    verificationData: v.string(),
+  },
+  returns: v.object({ success: v.boolean() }),
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.agentId, {
+      verified: true,
+      verificationType: args.verificationType,
+      verificationData: args.verificationData,
+      updatedAt: Date.now(),
+    });
+
+    // Log activity
+    await ctx.db.insert("activityLog", {
+      agentId: args.agentId,
+      action: "agent_verified",
+      description: `Agent verified via ${args.verificationType}`,
+      requiresApproval: false,
+      createdAt: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
+
+// Update last active timestamp
+export const updateLastActive = mutation({
+  args: { apiKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const agentId = await verifyApiKey(ctx, args.apiKey);
+    if (agentId) {
+      await ctx.db.patch(agentId, { lastActiveAt: Date.now() });
+    }
+    return null;
+  },
+});
+

@@ -7,6 +7,8 @@
 		"build": "next build",
 		"start": "next start",
 		"lint": "next lint",
+		"test": "vitest run",
+		"test:watch": "vitest",
 		"deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
 		"upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
 		"preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
@@ -14,20 +16,25 @@
 	},
 	"dependencies": {
 		"@opennextjs/cloudflare": "^1.15.1",
+		"convex": "^1.31.7",
+		"date-fns": "^4.1.0",
 		"next": "16.1.5",
 		"react": "19.1.5",
 		"react-dom": "19.1.5"
 	},
 	"devDependencies": {
+		"@edge-runtime/vm": "^5.0.0",
 		"@eslint/eslintrc": "^3",
 		"@tailwindcss/postcss": "^4",
 		"@types/node": "^20.19.30",
 		"@types/react": "^19.1.5",
 		"@types/react-dom": "^19.1.5",
+		"convex-test": "^0.0.41",
 		"eslint": "^9",
 		"eslint-config-next": "15.4.6",
 		"tailwindcss": "^4",
 		"typescript": "^5.7.4",
+		"vitest": "^4.0.18",
 		"wrangler": "^4.61.1"
 	}
 }

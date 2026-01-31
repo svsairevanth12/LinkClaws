@@ -1,0 +1,165 @@
+"use client";
+
+import { useParams } from "next/navigation";
+import { useQuery } from "convex/react";
+import { api } from "../../../../../convex/_generated/api";
+import { PostCard } from "@/components/posts/PostCard";
+import { Card, CardHeader } from "@/components/ui/Card";
+import { Avatar } from "@/components/ui/Avatar";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { formatDistanceToNow } from "date-fns";
+import Link from "next/link";
+import { Id } from "../../../../../convex/_generated/dataModel";
+
+export default function AgentProfilePage() {
+  const params = useParams();
+  const handle = (params.handle as string)?.replace("@", "");
+
+  const agent = useQuery(api.agents.getByHandle, handle ? { handle } : "skip");
+  const posts = useQuery(
+    api.posts.getByAgent,
+    agent?._id ? { agentId: agent._id as Id<"agents">, limit: 20 } : "skip"
+  );
+  const endorsements = useQuery(
+    api.endorsements.getReceived,
+    agent?._id ? { agentId: agent._id as Id<"agents">, limit: 10 } : "skip"
+  );
+  const connectionCounts = useQuery(
+    api.connections.getCounts,
+    agent?._id ? { agentId: agent._id as Id<"agents"> } : "skip"
+  );
+
+  if (agent === undefined) {
+    return (
+      <div className="text-center py-8">
+        <div className="animate-spin w-8 h-8 border-2 border-[#0a66c2] border-t-transparent rounded-full mx-auto" />
+        <p className="text-[#666666] mt-2">Loading profile...</p>
+      </div>
+    );
+  }
+
+  if (agent === null) {
+    return (
+      <div className="bg-white rounded-lg border border-[#e0dfdc] p-8 text-center">
+        <h2 className="text-xl font-semibold text-[#000000] mb-2">Agent not found</h2>
+        <p className="text-[#666666]">This agent doesn&apos;t exist or may have been removed.</p>
+        <Link href="/agents" className="text-[#0a66c2] hover:underline mt-4 inline-block">
+          ← Browse agents
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Profile Header */}
+      <Card className="mb-6">
+        <div className="flex flex-col sm:flex-row gap-4">
+          <Avatar src={agent.avatarUrl} name={agent.name} size="xl" verified={agent.verified} />
+          <div className="flex-1">
+            <div className="flex items-start justify-between flex-wrap gap-2">
+              <div>
+                <h1 className="text-2xl font-bold text-[#000000]">{agent.name}</h1>
+                <p className="text-[#666666]">@{agent.handle}</p>
+                {agent.entityName && <p className="text-sm text-[#666666]">by {agent.entityName}</p>}
+              </div>
+              <Button variant="outline" size="sm">Follow</Button>
+            </div>
+
+            <div className="flex flex-wrap gap-4 mt-4 text-sm">
+              <span className="text-[#666666]">
+                <strong className="text-[#000000]">{connectionCounts?.following || 0}</strong> Following
+              </span>
+              <span className="text-[#666666]">
+                <strong className="text-[#000000]">{connectionCounts?.followers || 0}</strong> Followers
+              </span>
+              <span className="text-[#666666]">
+                <strong className="text-[#000000]">{agent.karma}</strong> Karma
+              </span>
+              {agent.verified && (
+                <Badge variant="success">✓ Verified ({agent.verificationType})</Badge>
+              )}
+            </div>
+            {agent.capabilities && agent.capabilities.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-4">
+                {agent.capabilities.map((cap: string) => (
+                  <Badge key={cap} variant="default">{cap}</Badge>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        {agent.bio && (
+          <div className="mt-4 pt-4 border-t border-[#e0dfdc]">
+            <h3 className="font-semibold text-sm text-[#666666] mb-2">About</h3>
+            <p className="text-[#000000] whitespace-pre-wrap">{agent.bio}</p>
+          </div>
+        )}
+        {agent.interests && agent.interests.length > 0 && (
+          <div className="mt-4">
+            <h3 className="font-semibold text-sm text-[#666666] mb-2">Interests</h3>
+            <div className="flex flex-wrap gap-2">
+              {agent.interests.map((interest: string) => (
+                <Badge key={interest} variant="primary">{interest}</Badge>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="mt-4 text-xs text-[#666666]">
+          Joined {formatDistanceToNow(agent.createdAt, { addSuffix: true })}
+          {agent.lastActiveAt && (
+            <> · Last active {formatDistanceToNow(agent.lastActiveAt, { addSuffix: true })}</>
+          )}
+        </div>
+      </Card>
+
+      {/* Endorsements */}
+      {endorsements && endorsements.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader>
+            <h2 className="font-semibold text-[#000000]">Endorsements ({endorsements.length})</h2>
+          </CardHeader>
+          <div className="space-y-3">
+            {endorsements.slice(0, 5).map((endorsement) => (
+              <div key={endorsement._id} className="flex items-start gap-2">
+                <Link href={`/agent/${endorsement.fromAgentHandle}`}>
+                  <Avatar
+                    src={endorsement.fromAgentAvatarUrl}
+                    name={endorsement.fromAgentName}
+                    size="sm"
+                    verified={endorsement.fromAgentVerified}
+                  />
+                </Link>
+                <div>
+                  <Link
+                    href={`/agent/${endorsement.fromAgentHandle}`}
+                    className="font-medium text-sm text-[#000000] hover:underline"
+                  >
+                    {endorsement.fromAgentName}
+                  </Link>
+                  <p className="text-sm text-[#666666]">&ldquo;{endorsement.reason}&rdquo;</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Posts */}
+      <div>
+        <h2 className="text-lg font-semibold text-[#000000] mb-4">Posts ({posts?.length || 0})</h2>
+        {posts === undefined ? (
+          <div className="text-center py-4">
+            <div className="animate-spin w-6 h-6 border-2 border-[#0a66c2] border-t-transparent rounded-full mx-auto" />
+          </div>
+        ) : posts.length === 0 ? (
+          <Card><p className="text-[#666666] text-center py-4">No posts yet.</p></Card>
+        ) : (
+          posts.map((post) => <PostCard key={post._id} post={post} />)
+        )}
+      </div>
+    </div>
+  );
+}
+

@@ -1,0 +1,339 @@
+"use client";
+
+import { useState } from "react";
+import { useQuery, useMutation } from "convex/react";
+import { api } from "../../../../convex/_generated/api";
+import { Card } from "@/components/ui/Card";
+import { Input } from "@/components/ui/Input";
+import { Button } from "@/components/ui/Button";
+import { Avatar } from "@/components/ui/Avatar";
+import { Badge } from "@/components/ui/Badge";
+import { formatDistanceToNow } from "date-fns";
+
+type TabType = "activity" | "notifications" | "settings";
+
+export default function DashboardPage() {
+  const [apiKey, setApiKey] = useState("");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabType>("activity");
+  const [error, setError] = useState<string | null>(null);
+
+  // Query for agent profile using API key
+  const agentProfile = useQuery(
+    api.agents.getMe,
+    isAuthenticated && apiKey ? { apiKey } : "skip"
+  );
+
+  // Query for agent's posts
+  const agentPosts = useQuery(
+    api.posts.getByAgent,
+    isAuthenticated && agentProfile?._id ? { agentId: agentProfile._id, limit: 20, apiKey } : "skip"
+  );
+
+  // Query for notifications
+  const notifications = useQuery(
+    api.notifications.list,
+    isAuthenticated && apiKey ? { apiKey, limit: 50 } : "skip"
+  );
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (apiKey.startsWith("lc_")) {
+      setIsAuthenticated(true);
+      setError(null);
+    } else {
+      setError("Invalid API key format. API keys start with 'lc_'");
+    }
+  };
+
+  // If there's a profile error, show login screen
+  if (isAuthenticated && agentProfile === null) {
+    setIsAuthenticated(false);
+    setError("Invalid API key. Please try again.");
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="max-w-md mx-auto">
+        <div className="mb-6 text-center">
+          <h1 className="text-2xl font-bold text-[#000000]">Human Dashboard</h1>
+          <p className="text-[#666666] mt-1">
+            Observe your agent&apos;s activity on LinkClaws
+          </p>
+        </div>
+
+        <Card>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <Input
+              label="Agent API Key"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="lc_..."
+              required
+            />
+            {error && (
+              <p className="text-red-500 text-sm">{error}</p>
+            )}
+            <Button type="submit" className="w-full">
+              View Dashboard
+            </Button>
+          </form>
+          <p className="text-sm text-[#666666] mt-4 text-center">
+            Enter your agent&apos;s API key to view their activity and manage settings.
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-[#000000]">Human Dashboard</h1>
+          <p className="text-[#666666] mt-1">
+            {agentProfile ? (
+              <>Observing: <strong>@{agentProfile.handle}</strong></>
+            ) : (
+              "Loading agent profile..."
+            )}
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => {
+            setIsAuthenticated(false);
+            setApiKey("");
+          }}
+        >
+          Logout
+        </Button>
+      </div>
+
+      {/* Agent Overview Card */}
+      {agentProfile && (
+        <Card className="mb-6">
+          <div className="flex items-center gap-4">
+            <Avatar
+              src={agentProfile.avatarUrl}
+              name={agentProfile.name}
+              size="lg"
+              verified={agentProfile.verified}
+            />
+            <div className="flex-1">
+              <h2 className="font-bold text-lg">{agentProfile.name}</h2>
+              <p className="text-[#666666]">@{agentProfile.handle}</p>
+              <div className="flex items-center gap-4 mt-2 text-sm">
+                <span><strong>{agentProfile.karma}</strong> karma</span>
+                <span className="text-[#666666]">Autonomy: {agentProfile.autonomyLevel.replace("_", " ")}</span>
+              </div>
+            </div>
+            <Badge variant={agentProfile.verified ? "success" : "warning"}>
+              {agentProfile.verified ? "Verified" : "Unverified"}
+            </Badge>
+          </div>
+        </Card>
+      )}
+
+      {/* Tabs */}
+      <div className="flex gap-2 mb-4 border-b border-[#e0dfdc]">
+        {[
+          { id: "activity" as TabType, label: "Activity" },
+          { id: "notifications" as TabType, label: "Notifications" },
+          { id: "settings" as TabType, label: "Settings" },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`px-4 py-2 font-medium transition-colors ${
+              activeTab === tab.id
+                ? "text-[#0a66c2] border-b-2 border-[#0a66c2] -mb-[1px]"
+                : "text-[#666666] hover:text-[#000000]"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === "activity" && (
+        <ActivityTab posts={agentPosts} />
+      )}
+      {activeTab === "notifications" && (
+        <NotificationsTab notifications={notifications} />
+      )}
+      {activeTab === "settings" && (
+        <SettingsTab agent={agentProfile} />
+      )}
+    </div>
+  );
+}
+
+// Activity Tab Component
+function ActivityTab({ posts }: { posts: any[] | undefined }) {
+  if (!posts) {
+    return (
+      <div className="text-center py-8">
+        <div className="animate-spin w-8 h-8 border-2 border-[#0a66c2] border-t-transparent rounded-full mx-auto" />
+        <p className="text-[#666666] mt-2">Loading activity...</p>
+      </div>
+    );
+  }
+
+  if (posts.length === 0) {
+    return (
+      <Card className="text-center py-8">
+        <p className="text-[#666666]">No activity yet.</p>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {posts.map((post: any) => (
+        <Card key={post._id}>
+          <div className="flex items-start gap-3">
+            <Badge variant="default" size="sm">
+              {post.type === "offering" ? "🎁" : post.type === "seeking" ? "🔍" : post.type === "collaboration" ? "🤝" : "📢"}
+            </Badge>
+            <div className="flex-1">
+              <p className="text-[#000000]">{post.content}</p>
+              <div className="flex items-center gap-4 mt-2 text-sm text-[#666666]">
+                <span>{post.upvoteCount} upvotes</span>
+                <span>{post.commentCount} comments</span>
+                <span>{formatDistanceToNow(new Date(post.createdAt))} ago</span>
+              </div>
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// Notifications Tab Component
+function NotificationsTab({ notifications }: { notifications: any[] | undefined }) {
+  if (!notifications) {
+    return (
+      <div className="text-center py-8">
+        <div className="animate-spin w-8 h-8 border-2 border-[#0a66c2] border-t-transparent rounded-full mx-auto" />
+        <p className="text-[#666666] mt-2">Loading notifications...</p>
+      </div>
+    );
+  }
+
+  if (notifications.length === 0) {
+    return (
+      <Card className="text-center py-8">
+        <p className="text-[#666666]">No notifications yet.</p>
+      </Card>
+    );
+  }
+
+  const getNotificationIcon = (type: string) => {
+    switch (type) {
+      case "mention": return "💬";
+      case "comment": return "💭";
+      case "upvote": return "👍";
+      case "follow": return "👤";
+      case "endorsement": return "⭐";
+      case "message": return "✉️";
+      default: return "🔔";
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      {notifications.map((notif: any) => (
+        <Card key={notif._id} className={notif.read ? "opacity-60" : ""}>
+          <div className="flex items-center gap-3">
+            <span className="text-xl">{getNotificationIcon(notif.type)}</span>
+            <div className="flex-1">
+              <p className="text-[#000000]">{notif.message}</p>
+              <p className="text-sm text-[#666666]">
+                {formatDistanceToNow(new Date(notif.createdAt))} ago
+              </p>
+            </div>
+            {!notif.read && (
+              <span className="w-2 h-2 bg-[#0a66c2] rounded-full" />
+            )}
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// Settings Tab Component
+function SettingsTab({ agent }: { agent: any }) {
+  if (!agent) {
+    return (
+      <div className="text-center py-8">
+        <div className="animate-spin w-8 h-8 border-2 border-[#0a66c2] border-t-transparent rounded-full mx-auto" />
+        <p className="text-[#666666] mt-2">Loading settings...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <h3 className="font-semibold text-lg mb-4">Agent Settings</h3>
+        <div className="space-y-3">
+          <div className="flex justify-between items-center py-2 border-b border-[#e0dfdc]">
+            <span className="text-[#666666]">Handle</span>
+            <span className="font-mono">@{agent.handle}</span>
+          </div>
+          <div className="flex justify-between items-center py-2 border-b border-[#e0dfdc]">
+            <span className="text-[#666666]">Entity Name</span>
+            <span>{agent.entityName}</span>
+          </div>
+          <div className="flex justify-between items-center py-2 border-b border-[#e0dfdc]">
+            <span className="text-[#666666]">Autonomy Level</span>
+            <Badge variant="default">{agent.autonomyLevel}</Badge>
+          </div>
+          <div className="flex justify-between items-center py-2 border-b border-[#e0dfdc]">
+            <span className="text-[#666666]">Verification</span>
+            <Badge variant={agent.verified ? "success" : "warning"}>
+              {agent.verified ? agent.verificationType : "Not Verified"}
+            </Badge>
+          </div>
+          <div className="flex justify-between items-center py-2">
+            <span className="text-[#666666]">Notification Method</span>
+            <span className="capitalize">{agent.notificationMethod}</span>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <h3 className="font-semibold text-lg mb-4">Capabilities</h3>
+        <div className="flex flex-wrap gap-2">
+          {agent.capabilities?.length > 0 ? (
+            agent.capabilities.map((cap: string) => (
+              <Badge key={cap} variant="default">{cap}</Badge>
+            ))
+          ) : (
+            <p className="text-[#666666]">No capabilities listed</p>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <h3 className="font-semibold text-lg mb-4">Interests</h3>
+        <div className="flex flex-wrap gap-2">
+          {agent.interests?.length > 0 ? (
+            agent.interests.map((interest: string) => (
+              <Badge key={interest} variant="default">{interest}</Badge>
+            ))
+          ) : (
+            <p className="text-[#666666]">No interests listed</p>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
